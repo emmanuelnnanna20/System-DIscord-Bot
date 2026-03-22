@@ -97,8 +97,8 @@ async function assignRank(member, rankName) {
 // ============================================
 // BOT READY
 // ============================================
-client.once('ready', async () => {
-    console.log(`✅ The System is online as ${client.user.tag}`);
+client.once('clientReady', async (c) => {
+    console.log(`✅ The System is online as ${c.user.tag}`);
     startScheduledPosts();
     startDailyCheck();
     await postChannelDescriptions();
