@@ -1,7 +1,6 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits } = require('discord.js');
 const cron = require('node-cron');
-const fs = require('fs');
 
 const client = new Client({
     intents: [
@@ -13,95 +12,11 @@ const client = new Client({
 });
 
 // ============================================
-// DATA STORAGE
-// ============================================
-const DATA_FILE = 'data.json';
-
-function loadData() {
-    if (fs.existsSync(DATA_FILE)) {
-        return JSON.parse(fs.readFileSync(DATA_FILE));
-    }
-    return {};
-}
-
-function saveData(data) {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-}
-
-let userData = loadData();
-
-function getUser(userId) {
-    if (!userData[userId]) {
-        userData[userId] = {
-            streak: 0,
-            missedDays: 0,
-            lastActiveDate: null,
-            todayMessages: 0,
-            rank: 'E Rank Hunter',
-            totalActiveDays: 0,
-        };
-    }
-    return userData[userId];
-}
-
-// ============================================
-// RANK SYSTEM
-// ============================================
-const ranks = [
-    'E Rank Hunter',
-    'D Rank Hunter',
-    'C Rank Hunter',
-    'B Rank Hunter',
-    'S Rank Hunter'
-];
-
-const rankThresholds = {
-    'E Rank Hunter': 0,
-    'D Rank Hunter': 7,
-    'C Rank Hunter': 21,
-    'B Rank Hunter': 60,
-    'S Rank Hunter': 100
-};
-
-function getRankForStreak(streak) {
-    if (streak >= 100) return 'S Rank Hunter';
-    if (streak >= 60) return 'B Rank Hunter';
-    if (streak >= 21) return 'C Rank Hunter';
-    if (streak >= 7) return 'D Rank Hunter';
-    return 'E Rank Hunter';
-}
-
-function getLowerRank(currentRank) {
-    const index = ranks.indexOf(currentRank);
-    if (index <= 0) return 'E Rank Hunter';
-    return ranks[index - 1];
-}
-
-async function assignRank(member, rankName) {
-    try {
-        // Remove all existing ranks
-        for (const rank of ranks) {
-            const role = member.guild.roles.cache.find(r => r.name === rank);
-            if (role && member.roles.cache.has(role.id)) {
-                await member.roles.remove(role);
-            }
-        }
-        // Assign new rank
-        const newRole = member.guild.roles.cache.find(r => r.name === rankName);
-        if (newRole) await member.roles.add(newRole);
-    } catch (err) {
-        console.error('Assign rank error:', err);
-    }
-}
-
-// ============================================
 // BOT READY
 // ============================================
 client.once('clientReady', async (c) => {
     console.log(`✅ The System is online as ${c.user.tag}`);
     startScheduledPosts();
-    startDailyCheck();
-    await postChannelDescriptions();
 });
 
 // ============================================
@@ -115,144 +30,20 @@ client.on('guildMemberAdd', async (member) => {
         if (welcomeChannel) {
             await welcomeChannel.send(
                 `⚔️ **A new hunter has entered the server.**\n\n` +
-                `Welcome **${member.user.username}**!\n` +
-                `You have been assigned **E Rank Hunter**.\n\n` +
-                `Your journey begins now.\n` +
-                `Introduce yourself here:\n` +
+                `Welcome **${member.user.username}**!\n\n` +
+                `Introduce yourself:\n` +
                 `• Your name\n` +
-                `• Your first quest\n` +
-                `• What you are leveling up\n\n` +
-                `Show up every day and the system will reward you.\n` +
+                `• What you are currently working on in your life\n` +
+                `• One goal you are chasing right now\n\n` +
+                `Glad you are here. Let's level up together.\n` +
                 `**Arise.** 🔥`
             );
         }
-
-        // Assign E Rank Hunter
-        const role = member.guild.roles.cache
-            .find(r => r.name === 'E Rank Hunter');
-        if (role) await member.roles.add(role);
-
-        // Initialize user data
-        getUser(member.id);
-        saveData(userData);
 
     } catch (err) {
         console.error('Welcome error:', err);
     }
 });
-
-// ============================================
-// TRACK DAILY MESSAGES
-// ============================================
-client.on('messageCreate', async (message) => {
-    if (message.author.bot) return;
-    if (!message.guild) return;
-
-    const userId = message.author.id;
-    const today = new Date().toISOString().split('T')[0];
-    const user = getUser(userId);
-
-    // Count messages for today
-    if (user.lastActiveDate === today) {
-        user.todayMessages += 1;
-    } else {
-        user.todayMessages = 1;
-    }
-
-    saveData(userData);
-});
-
-// ============================================
-// DAILY CHECK — runs at midnight every day
-// ============================================
-function startDailyCheck() {
-    cron.schedule('0 0 * * *', async () => {
-        console.log('Running daily streak check...');
-
-        const guild = client.guilds.cache.get(process.env.GUILD_ID);
-        if (!guild) return;
-
-        const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1);
-        const yesterdayStr = yesterday.toISOString().split('T')[0];
-
-        for (const userId in userData) {
-            const user = userData[userId];
-
-            try {
-                const member = await guild.members.fetch(userId).catch(() => null);
-                if (!member) continue;
-
-                const wasActiveYesterday = user.lastActiveDate === yesterdayStr
-                    && user.todayMessages >= 3;
-
-                if (wasActiveYesterday) {
-                    // Active — update streak
-                    user.streak += 1;
-                    user.missedDays = 0;
-                    user.totalActiveDays += 1;
-
-                    const newRank = getRankForStreak(user.streak);
-
-                    // Check for rank up
-                    if (newRank !== user.rank) {
-                        const oldRank = user.rank;
-                        user.rank = newRank;
-                        await assignRank(member, newRank);
-
-                        const winsChannel = guild.channels.cache
-                            .find(ch => ch.name === 'wins');
-                        if (winsChannel) {
-                            await winsChannel.send(
-                                `🔥 **RANK UP!**\n\n` +
-                                `**${member.user.username}** has advanced from **${oldRank}** to **${newRank}**!\n\n` +
-                                `**${user.streak} days of pure consistency.**\n` +
-                                `The system acknowledges your discipline.\n` +
-                                `Keep grinding Hunter. ⚔️`
-                            );
-                        }
-                    }
-
-                } else {
-                    // Not active yesterday
-                    user.missedDays += 1;
-
-                    if (user.missedDays >= 2) {
-                        // 2 missed days in a row — drop one rank and reset streak
-                        const previousRank = user.rank;
-                        const lowerRank = getLowerRank(user.rank);
-
-                        user.streak = 0;
-                        user.missedDays = 0;
-                        user.rank = lowerRank;
-
-                        await assignRank(member, lowerRank);
-
-                        const generalChannel = guild.channels.cache
-                            .find(ch => ch.name === 'general-chat');
-                        if (generalChannel && previousRank !== lowerRank) {
-                            await generalChannel.send(
-                                `⚠️ **${member.user.username}** went absent for 2 days.\n` +
-                                `Rank dropped from **${previousRank}** to **${lowerRank}**.\n` +
-                                `Streak reset to zero.\n\n` +
-                                `Come back stronger Hunter. The grind waits for no one. ⚔️`
-                            );
-                        }
-                    }
-                }
-
-                // Reset today's message count for new day
-                user.todayMessages = 0;
-                saveData(userData);
-
-            } catch (err) {
-                console.error(`Error processing user ${userId}:`, err);
-            }
-        }
-
-        console.log('Daily streak check complete.');
-    });
-}
 
 // ============================================
 // AUTO MODERATION
@@ -276,11 +67,6 @@ client.on('messageCreate', async (message) => {
             `⚠️ **${message.author.username}** links are not allowed here Hunter.`
         );
 
-        const user = getUser(message.author.id);
-        if (!user.warnings) user.warnings = 0;
-        user.warnings += 1;
-        saveData(userData);
-
         const modLogs = message.guild.channels.cache
             .find(ch => ch.name === 'mod-logs');
         if (modLogs) {
@@ -288,15 +74,7 @@ client.on('messageCreate', async (message) => {
                 `📋 **MOD LOG**\n` +
                 `User: ${message.author.username}\n` +
                 `Action: Link deleted\n` +
-                `Warnings: ${user.warnings}\n` +
                 `Channel: ${message.channel.name}`
-            );
-        }
-
-        if (user.warnings >= 3) {
-            await member.timeout(10 * 60 * 1000, 'Too many warnings');
-            await message.channel.send(
-                `🚫 **${message.author.username}** has been timed out for 10 minutes.`
             );
         }
     }
@@ -312,69 +90,6 @@ client.on('messageCreate', async (message) => {
     const content = message.content.toLowerCase();
     const userId = message.author.id;
     const guild = message.guild;
-    const user = getUser(userId);
-
-    // !rank
-    if (content === '!rank') {
-        const nextRankIndex = ranks.indexOf(user.rank) + 1;
-        const nextRank = ranks[nextRankIndex];
-        const daysNeeded = nextRank
-            ? rankThresholds[nextRank] - user.streak
-            : 0;
-
-        message.reply(
-            `⚔️ **Hunter Status**\n\n` +
-            `Hunter: **${message.author.username}**\n` +
-            `Current Rank: **${user.rank}**\n` +
-            `Current Streak: **${user.streak} days**\n` +
-            `Total Active Days: **${user.totalActiveDays} days**\n` +
-            `${nextRank
-                ? `Days to **${nextRank}**: **${daysNeeded} days**`
-                : `You have reached the highest rank. Legendary. 👑`
-            }`
-        );
-    }
-
-    // !streak
-    if (content === '!streak') {
-        message.reply(
-            `🔥 **${message.author.username}** is on a **${user.streak} day streak!**\n` +
-            `Total active days: **${user.totalActiveDays}**\n` +
-            `Don't break the chain. ⚔️`
-        );
-    }
-
-    // !profile
-    if (content === '!profile') {
-        message.reply(
-            `👤 **Hunter Profile**\n\n` +
-            `Hunter: **${message.author.username}**\n` +
-            `Rank: **${user.rank}**\n` +
-            `Current Streak: **${user.streak} days**\n` +
-            `Total Active Days: **${user.totalActiveDays} days**\n` +
-            `Messages Today: **${user.todayMessages}**\n\n` +
-            `Keep showing up. The system rewards consistency. 🔥`
-        );
-    }
-
-    // !leaderboard
-    if (content === '!leaderboard') {
-        const sorted = Object.entries(userData)
-            .sort((a, b) => b[1].streak - a[1].streak)
-            .slice(0, 10);
-
-        let board = `👑 **TOP HUNTERS — LONGEST STREAKS**\n\n`;
-        for (let i = 0; i < sorted.length; i++) {
-            try {
-                const u = await client.users.fetch(sorted[i][0]);
-                const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-                board += `${medal} **${u.username}** — ${sorted[i][1].streak} day streak | ${sorted[i][1].rank}\n`;
-            } catch {
-                continue;
-            }
-        }
-        message.channel.send(board);
-    }
 
     // !announce — Monarch only
     if (content.startsWith('!announce ')) {
@@ -394,27 +109,6 @@ client.on('messageCreate', async (message) => {
             message.reply('Announcement posted.');
         }
     }
-
-    // !help
-    if (content === '!help') {
-        message.reply(
-            `⚔️ **SYSTEM COMMANDS**\n\n` +
-            `**!rank** — Check your rank and streak\n` +
-            `**!streak** — Check your current streak\n` +
-            `**!profile** — View your full hunter profile\n` +
-            `**!leaderboard** — See top 10 hunters by streak\n` +
-            `**!help** — Show this menu\n\n` +
-            `**HOW RANKS WORK:**\n` +
-            `Show up and send at least 3 messages every day.\n` +
-            `7 days → D Rank Hunter\n` +
-            `21 days → C Rank Hunter\n` +
-            `60 days → B Rank Hunter\n` +
-            `100 days → S Rank Hunter\n\n` +
-            `Miss 2 days in a row and your streak resets.\n` +
-            `Rank drops one level down.\n\n` +
-            `Consistency is everything. **Arise.** 🔥`
-        );
-    }
 });
 
 // ============================================
@@ -430,355 +124,182 @@ function startScheduledPosts() {
         if (channel) channel.send(msg);
     };
 
-    // Daily 7AM
+    const random = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+    // ============================================
+    // DAILY 7AM — APP QUEST REMINDER
+    // ============================================
+    const questReminders = [
+        `⚔️ **Good morning Hunter.**\n\nYour daily quests are waiting in the app.\nOpen Level Up. Complete your quests. Stay consistent.\n\nThe grind starts now. 🔥`,
+        `🌅 **Rise and grind Hunter.**\n\nHave you opened the app today?\nYour quests reset. Your streak is on the line.\nDon't let today be the day you break the chain. ⚔️`,
+        `⚡ **Day ${new Date().getDate()}. Quests are live.**\n\nOpen Level Up and get to work.\nEvery completed quest is a step closer to the best version of you.\nArise. 🔥`,
+        `🎯 **Your quests are not going to complete themselves.**\n\nOpen the app. Lock in.\nOne quest at a time. That is all it takes.\nLet's go Hunter. ⚔️`,
+        `💜 **The system has reset.**\n\nFresh day. Fresh quests. Fresh opportunity.\nOpen Level Up and make today count.\nConsistency builds legends. 🔥`,
+        `🔥 **Morning Hunter.**\n\nWhile everyone else is sleeping on their potential you are here.\nOpen the app. Complete your quests. Stay ahead.\nArise. ⚔️`,
+        `⚔️ **New day. Same mission.**\n\nGet on the app and complete your daily quests.\nSmall wins every day build massive results over time.\nYou already know what to do. 🔥`,
+    ];
+
     cron.schedule('0 7 * * *', () => {
-        send('daily-quests',
-            `⚔️ **Good morning Hunters.**\n\n` +
-            `The system has reset. Your daily quests are waiting.\n` +
-            `What are you conquering today?\n\n` +
-            `Drop your quest list below.\n` +
-            `Minimum 3 messages today keeps your streak alive.\n\n` +
-            `**Arise.** 🔥`
-        );
+        send('daily-quests', random(questReminders));
     });
 
-    // Daily 8AM
+    // ============================================
+    // DAILY 8AM — GENERAL MOTIVATION
+    // ============================================
+    const morningMessages = [
+        `What is one thing you are committing to today? Drop it below. 💜`,
+        `One habit. One day. One step forward.\nWhat are you working on today? ⚔️`,
+        `The version of you that you want to become is built one day at a time.\nWhat does today look like for you? 🔥`,
+        `Good morning hunters. What is on your quest list today? Drop it. 💜`,
+        `Every day you show up is a day the old version of you loses.\nWhat are you doing today? ⚔️`,
+        `Motivation gets you started. Discipline keeps you going.\nWhat are you locking in on today? 🔥`,
+        `Another day to be better than yesterday.\nWhat is your focus today hunters? 💜`,
+    ];
+
     cron.schedule('0 8 * * *', () => {
-        send('general-chat',
-            `Another day. Another chance to level up.\n\n` +
-            `What is one thing you are committing to today? 💜`
-        );
+        send('general-chat', random(morningMessages));
     });
 
-    // Daily 2PM
+    // ============================================
+    // DAILY 2PM — MIDDAY CHECK IN
+    // ============================================
+    const middayMessages = [
+        `⏰ **Midday check in.**\n\nHave you opened the app today?\nHow are your quests going? Still on track? 🔥`,
+        `⚡ **Halfway through the day.**\n\nIf you have not touched the app yet — now is the time.\nNo quest left behind. ⚔️`,
+        `💜 **Afternoon hunters.**\n\nChecking in. How is the grind going?\nDrop your progress below. Let's hear it. 🔥`,
+        `🎯 **Midday reminder.**\n\nYour quests are still waiting if you have not done them.\nClose this. Open Level Up. Handle it. ⚔️`,
+        `⚔️ **It is not too late.**\n\nWhatever you have not done today — you still have time.\nGet on the app. Finish strong. 🔥`,
+    ];
+
     cron.schedule('0 14 * * *', () => {
-        send('accountability',
-            `⏰ **Midday check in.**\n\n` +
-            `How are your quests going?\n` +
-            `Still on track or do you need to push harder?\n\n` +
-            `Remember — 3 messages a day keeps your streak alive. 🔥`
-        );
+        send('accountability', random(middayMessages));
     });
 
-    // Daily 7PM
+    // ============================================
+    // DAILY 7PM — EVENING WINS
+    // ============================================
+    const eveningMessages = [
+        `🏆 **Evening hunters.**\n\nDrop your wins for today.\nBig or small. Did you complete your quests? Let's hear it. 👑`,
+        `⚔️ **Day is almost done.**\n\nWhat did you conquer today?\nDrop your wins below. Every victory counts. 🔥`,
+        `💜 **Evening check in.**\n\nDid you complete your quests today?\nShare your wins. We celebrate everything here. 👑`,
+        `🔥 **End of day hunters.**\n\nWhat did you get done today?\nHold yourself accountable. Drop it below. ⚔️`,
+        `👑 **Before you sleep.**\n\nDid you complete your quests?\nDrop your wins. Reflect on today. Show up again tomorrow. 🔥`,
+    ];
+
     cron.schedule('0 19 * * *', () => {
-        send('wins',
-            `🏆 **Evening hunters.**\n\n` +
-            `Drop your wins for today.\n` +
-            `Big or small. Every day counts.\n\n` +
-            `What did you conquer today? 👑`
-        );
+        send('wins', random(eveningMessages));
     });
 
-    // Sunday 6PM
-    cron.schedule('0 18 * * 0', () => {
-        send('streak-flex',
-            `🔥 **Sunday streak check.**\n\n` +
-            `How many days have you stayed consistent?\n` +
-            `Type **!streak** to show yours.\n\n` +
-            `Top hunters type **!leaderboard** ⚔️`
-        );
+    // ============================================
+    // DAILY 9PM — APP REMINDER BEFORE BED
+    // ============================================
+    const nightReminders = [
+        `🌙 **Before you close your eyes.**\n\nDid you log your quests in the app today?\nOpen Level Up. Complete what is left.\nTomorrow is another chance. Arise. ⚔️`,
+        `💜 **Night reminder hunters.**\n\nStreak on the line.\nIf you have not opened Level Up today — do it now.\nDon't break the chain. 🔥`,
+        `⚔️ **Last call for today's quests.**\n\nOpen the app. Log your progress.\nEvery day you show up compounds into something legendary. 👑`,
+        `🌙 **The day is almost over.**\n\nHave you completed your quests?\nOpen Level Up. Finish strong. Sleep with a win. 🔥`,
+    ];
+
+    cron.schedule('0 21 * * *', () => {
+        send('daily-quests', random(nightReminders));
     });
 
-    // Monday 9AM
+    // ============================================
+    // MONDAY 9AM — WEEKLY KICKOFF
+    // ============================================
+    const mondayMessages = [
+        `⚔️ **New week. New quests. New opportunity.**\n\nSet your intentions for this week.\nWhat are you building? What habit are you locking in?\nThe grind starts now. 💜`,
+        `🔥 **Monday is not the enemy.**\n\nMonday is the reset. The fresh start. The opportunity.\nSet your weekly goals. Open the app. Let's go. ⚔️`,
+        `💜 **Week ${Math.ceil(new Date().getDate() / 7)} begins.**\n\nWhat does this week look like for you hunters?\nDrop your weekly intentions below. Hold each other accountable. 🔥`,
+        `⚡ **The week just dropped like a dungeon gate.**\n\nAre you ready?\nSet your quests. Lock in your habits. Go. ⚔️`,
+    ];
+
     cron.schedule('0 9 * * 1', () => {
-        send('announcements',
-            `⚔️ **New week. New quests. New opportunity.**\n\n` +
-            `Set your intentions for this week hunters.\n` +
-            `What rank are you chasing?\n` +
-            `What habit are you building?\n\n` +
-            `The grind starts now. 💜`
-        );
+        send('announcements', random(mondayMessages));
     });
 
-    // Wednesday 12PM
+    // ============================================
+    // WEDNESDAY 12PM — MIDWEEK CHECK
+    // ============================================
+    const wednesdayMessages = [
+        `⚡ **Midweek checkpoint.**\n\nHow is your week going?\nAre you on track with your quests and habits?\nDrop your progress below. 🔥`,
+        `💜 **Wednesday hunters.**\n\nHalf the week is gone.\nWhat have you accomplished so far?\nWhat still needs to get done? ⚔️`,
+        `⚔️ **Week is not over.**\n\nWhatever fell off this week — you still have time.\nGet back on the app. Finish the week strong. 🔥`,
+        `🎯 **Midweek reality check.**\n\nAre you where you said you would be this week?\nIf not — today is the day to fix it. ⚔️`,
+    ];
+
     cron.schedule('0 12 * * 3', () => {
-        send('30-day-challenges',
-            `⚡ **Midweek checkpoint.**\n\n` +
-            `If you are on a 30 day challenge drop your day count below.\n` +
-            `Hold the line. Don't quit now.\n\n` +
-            `The system rewards consistency. 🔥`
-        );
+        send('30-day-challenges', random(wednesdayMessages));
     });
 
-    // Friday 6PM
+    // ============================================
+    // FRIDAY 6PM — END OF WEEK PUSH
+    // ============================================
+    const fridayMessages = [
+        `⚔️ **It is Friday hunters.**\n\nEnd the week strong.\nDon't go into the weekend with incomplete quests.\nFinish what you started. 🔥`,
+        `🔥 **Friday is not the finish line.**\n\nThe weekend is two more days to stay consistent.\nDon't let the week end without your wins. ⚔️`,
+        `💜 **Almost at the end of the week.**\n\nHow did you do?\nDrop your weekly wins below before the weekend hits. 👑`,
+        `⚡ **Friday push.**\n\nOpen the app. Complete today's quests.\nGo into the weekend with momentum. ⚔️`,
+    ];
+
     cron.schedule('0 18 * * 5', () => {
-        send('general-chat',
-            `⚔️ **It's Friday hunters.**\n\n` +
-            `End the week strong.\n` +
-            `Don't break your streak now.\n` +
-            `The weekend is where legends are made. 🔥`
-        );
+        send('general-chat', random(fridayMessages));
     });
 
-    // Sunday 7PM
+    // ============================================
+    // SUNDAY 6PM — STREAK CHECK
+    // ============================================
+    const sundayStreakMessages = [
+        `🔥 **Sunday streak check.**\n\nHow many days have you stayed consistent this week?\nDrop your streak below. We see you. ⚔️`,
+        `💜 **End of the week hunters.**\n\nHow consistent were you this week with the app?\nShare your streak. Celebrate your discipline. 🔥`,
+        `⚔️ **Sunday accountability.**\n\nDid you show up every day this week?\nDrop your honest answer below. Growth starts with truth. 💜`,
+    ];
+
+    cron.schedule('0 18 * * 0', () => {
+        send('streak-flex', random(sundayStreakMessages));
+    });
+
+    // ============================================
+    // SUNDAY 7PM — WEEKLY REFLECTION
+    // ============================================
+    const sundayReflectionMessages = [
+        `👑 **Weekly reflection.**\n\nWhat changed in you this week?\nWhat did you level up?\nShare your progress. Every win matters here. ⚔️`,
+        `💜 **Before the new week begins.**\n\nReflect on this week.\nWhat worked? What did not? What will you do differently?\nDrop it below. 🔥`,
+        `🌱 **Sunday reflection hunters.**\n\nGrowth is not always visible immediately.\nBut every day you showed up compounded into something real.\nWhat are you taking into next week? ⚔️`,
+        `⚔️ **Week in review.**\n\nBe honest with yourself.\nWhere did you show up? Where did you fall short?\nThis reflection is how you get better. 💜`,
+    ];
+
     cron.schedule('0 19 * * 0', () => {
-        send('transformation',
-            `👑 **Weekly reflection.**\n\n` +
-            `What changed in you this week?\n` +
-            `What did you level up?\n` +
-            `Share your progress. Every win matters here. ⚔️`
-        );
+        send('transformation', random(sundayReflectionMessages));
     });
 
-    // 1st of every month 9AM
+    // ============================================
+    // 1ST OF EVERY MONTH — NEW MONTH
+    // ============================================
+    const newMonthMessages = [
+        `⚔️ **New month. Fresh start.**\n\nSet your monthly quests in the app.\nWhat are you leveling up this month?\nThe system is watching. 🔥`,
+        `🔥 **Month one begins today.**\n\nNew month means new goals. New habits. New opportunities.\nOpen Level Up. Set your quests. Go. ⚔️`,
+        `💜 **First day of the month hunters.**\n\nThis month you will be consistent.\nThis month you will show up.\nThis month you level up. Start today. 🔥`,
+    ];
+
     cron.schedule('0 9 1 * *', () => {
-        send('announcements',
-            `⚔️ **New month. Fresh start.**\n\n` +
-            `Set your monthly quests.\n` +
-            `What are you leveling up this month?\n\n` +
-            `The system is watching. 🔥`
-        );
+        send('announcements', random(newMonthMessages));
     });
 
-    // 28th of every month 8PM
+    // ============================================
+    // 28TH OF EVERY MONTH — MONTH END RECAP
+    // ============================================
+    const monthEndMessages = [
+        `👑 **Month end recap.**\n\nDrop your biggest win this month.\nWe celebrate every hunter's progress here.\nYou showed up. That matters. ⚔️`,
+        `🔥 **Month is almost over.**\n\nHow did you do?\nDrop your monthly wins below.\nEvery step forward is worth celebrating. 💜`,
+        `⚔️ **Final days of the month.**\n\nReflect on how far you have come.\nDrop your progress below.\nNext month we go harder. 🔥`,
+    ];
+
     cron.schedule('0 20 28 * *', () => {
-        send('wins',
-            `👑 **Month end recap.**\n\n` +
-            `Drop your biggest win this month.\n` +
-            `We celebrate every hunter's progress here.\n\n` +
-            `You showed up. That matters. ⚔️`
-        );
+        send('wins', random(monthEndMessages));
     });
 
     console.log('✅ Scheduled posts running');
-}
-
-
-// ============================================
-// ONE TIME CHANNEL DESCRIPTION POSTS
-// ============================================
-async function postChannelDescriptions() {
-    const guild = client.guilds.cache.get(process.env.GUILD_ID);
-    if (!guild) return;
-
-    const posts = {
-        'announcements':
-            `📢 **ANNOUNCEMENTS**\n\n` +
-            `This is the official channel for all server updates.\n\n` +
-            `You will find here:\n` +
-            `• App updates and new features\n` +
-            `• Server events and challenges\n` +
-            `• Important news from the Monarch\n` +
-            `• Monthly quest drops\n\n` +
-            `Only the Monarch posts here.\n` +
-            `Turn on notifications for this channel so you never miss a thing. 🔔`,
-
-        'rules':
-            `📜 **SERVER RULES**\n\n` +
-            `Read and respect these. No exceptions.\n\n` +
-            `**1.** Respect every hunter in this server\n` +
-            `**2.** No spam, no self promotion, no unsolicited links\n` +
-            `**3.** Keep content relevant — habits, growth, leveling up\n` +
-            `**4.** No negativity or discouraging other members\n` +
-            `**5.** English only in main channels\n` +
-            `**6.** Have fun and stay consistent\n\n` +
-            `Break the rules and the system will handle you. ⚔️`,
-
-        'roadmap':
-            `🗺️ **ROADMAP**\n\n` +
-            `This is where you see what is coming next for the Level Up app.\n\n` +
-            `You will find here:\n` +
-            `• Upcoming features in development\n` +
-            `• Features that just shipped\n` +
-            `• The vision for where this app is going\n\n` +
-            `Your feedback shapes this roadmap.\n` +
-            `Drop feature requests in **#feature-requests**. 💜`,
-
-        'introductions':
-            `👋 **INTRODUCTIONS**\n\n` +
-            `Every hunter introduces themselves here when they join.\n\n` +
-            `When you post tell us:\n` +
-            `• Your name\n` +
-            `• What you are currently leveling up in your life\n` +
-            `• Your first quest\n` +
-            `• What rank you are chasing\n\n` +
-            `This is where your journey begins.\n` +
-            `Welcome to the server Hunter. **Arise.** 🔥`,
-
-        'general-chat':
-            `💬 **GENERAL CHAT**\n\n` +
-            `The main hub of the server.\n\n` +
-            `Talk about anything here:\n` +
-            `• Your daily grind\n` +
-            `• Motivation and mindset\n` +
-            `• App experiences\n` +
-            `• Anything related to leveling up your life\n\n` +
-            `Keep it positive. Keep it real. Keep it hunter. ⚔️`,
-
-        'memes':
-            `😂 **MEMES**\n\n` +
-            `The one place to relax and have fun.\n\n` +
-            `Drop your best:\n` +
-            `• Solo Leveling memes\n` +
-            `• Real life RPG memes\n` +
-            `• Productivity and grind culture memes\n` +
-            `• Anything that makes a hunter laugh\n\n` +
-            `Keep it clean. Keep it funny. 💜`,
-
-        'daily-quests':
-            `⚔️ **DAILY QUESTS**\n\n` +
-            `This is the most important channel in the server.\n\n` +
-            `Every single day come here and:\n` +
-            `• Post your quest list for the day\n` +
-            `• Share what you are committing to\n` +
-            `• Hold yourself publicly accountable\n\n` +
-            `**The rule:**\n` +
-            `At least 3 messages anywhere in the server per day keeps your streak alive.\n` +
-            `Miss 2 days in a row and your streak resets. Rank drops.\n\n` +
-            `Show up every day. No excuses. 🔥`,
-
-        'wins':
-            `🏆 **WINS**\n\n` +
-            `This is where hunters celebrate progress.\n\n` +
-            `Drop your wins here:\n` +
-            `• Completed quests\n` +
-            `• Habits you stuck to\n` +
-            `• Goals you smashed\n` +
-            `• Rank ups\n` +
-            `• Any personal victory no matter how small\n\n` +
-            `Every win gets celebrated here.\n` +
-            `Big or small. You showed up. That matters. 👑`,
-
-        'streak-flex':
-            `🔥 **STREAK FLEX**\n\n` +
-            `This is where consistent hunters show off.\n\n` +
-            `Come here to:\n` +
-            `• Flex your current streak\n` +
-            `• Celebrate hitting streak milestones\n` +
-            `• Motivate others to stay consistent\n\n` +
-            `Type **!streak** to display yours.\n` +
-            `Type **!leaderboard** to see the top hunters.\n\n` +
-            `Consistency is the only cheat code. ⚔️`,
-
-        'accountability':
-            `🤝 **ACCOUNTABILITY**\n\n` +
-            `This is where hunters keep each other honest.\n\n` +
-            `Use this channel to:\n` +
-            `• Find an accountability partner\n` +
-            `• Check in on your progress midday\n` +
-            `• Call yourself out when you fall short\n` +
-            `• Support other hunters who are struggling\n\n` +
-            `We rise together here. No judgment. Just growth. 💜`,
-
-        'level-up-moments':
-            `⚡ **LEVEL UP MOMENTS**\n\n` +
-            `Share your rank up screenshots here.\n\n` +
-            `When you rank up in the server or level up in the app:\n` +
-            `• Screenshot it\n` +
-            `• Drop it here\n` +
-            `• Let the community celebrate with you\n\n` +
-            `These moments are what the grind is for. 🔥`,
-
-        '30-day-challenges':
-            `📅 **30 DAY CHALLENGES**\n\n` +
-            `This channel is for hunters running long term challenges.\n\n` +
-            `How it works:\n` +
-            `• Announce your 30 day challenge here on day 1\n` +
-            `• Check in every week with your day count\n` +
-            `• Complete the 30 days and drop your final post\n\n` +
-            `Current and past challenges live here.\n` +
-            `Start yours today. 30 days changes everything. ⚔️`,
-
-        'transformation':
-            `🌱 **TRANSFORMATION**\n\n` +
-            `This is where real growth gets documented.\n\n` +
-            `Share here:\n` +
-            `• Weekly reflections\n` +
-            `• Monthly progress updates\n` +
-            `• Before and after stories\n` +
-            `• How the app or this community changed you\n\n` +
-            `Your story might be exactly what another hunter needs to see.\n` +
-            `Document the journey. 👑`,
-
-        'bug-reports':
-            `🐛 **BUG REPORTS**\n\n` +
-            `Found something broken in the app? Report it here.\n\n` +
-            `When reporting a bug include:\n` +
-            `• What you were doing when it happened\n` +
-            `• What you expected to happen\n` +
-            `• What actually happened\n` +
-            `• Your device and Android version\n\n` +
-            `Every report helps make the app better.\n` +
-            `The Monarch reads every single one. 💜`,
-
-        'feature-requests':
-            `💡 **FEATURE REQUESTS**\n\n` +
-            `Have an idea that would make Level Up better?\n` +
-            `Drop it here.\n\n` +
-            `Good feature requests include:\n` +
-            `• A clear description of what you want\n` +
-            `• Why it would help your experience\n` +
-            `• How you imagine it working\n\n` +
-            `The most requested features go straight to the roadmap.\n` +
-            `Your voice shapes this app. ⚔️`,
-
-        'app-feedback':
-            `📱 **APP FEEDBACK**\n\n` +
-            `General thoughts on the Level Up app go here.\n\n` +
-            `Share:\n` +
-            `• What you love about the app\n` +
-            `• What you think could be better\n` +
-            `• Your overall experience\n` +
-            `• Reviews and honest opinions\n\n` +
-            `Honest feedback only. No sugarcoating needed.\n` +
-            `This is how the app gets legendary. 🔥`,
-
-        'anime-talk':
-            `⚔️ **ANIME TALK**\n\n` +
-            `The Solo Leveling fan zone.\n\n` +
-            `Talk about:\n` +
-            `• Solo Leveling manga and anime\n` +
-            `• Favourite hunters and arcs\n` +
-            `• Other anime and manhwa\n` +
-            `• Anything from the Solo Leveling universe\n\n` +
-            `Sung Jin-Woo would be proud you are here. 💜`,
-
-        'off-topic':
-            `💭 **OFF TOPIC**\n\n` +
-            `Everything that does not fit anywhere else goes here.\n\n` +
-            `Talk about:\n` +
-            `• Life in general\n` +
-            `• Random thoughts\n` +
-            `• Anything that is not covered in other channels\n\n` +
-            `Keep it respectful. Keep it real. 🔥`,
-    };
-
-    for (const [channelName, content] of Object.entries(posts)) {
-        try {
-            const channel = guild.channels.cache
-                .find(ch => ch.name === channelName);
-
-            if (!channel) {
-                console.log(`Channel not found: ${channelName}`);
-                continue;
-            }
-
-            // Check if already posted — look for pinned messages
-            const pins = await channel.messages.fetchPinned();
-            const alreadyPosted = pins.some(msg =>
-                msg.author.id === client.user.id
-            );
-
-            if (alreadyPosted) {
-                console.log(`Already posted in: ${channelName}`);
-                continue;
-            }
-
-            // Send and pin the message
-            const sent = await channel.send(content);
-            await sent.pin();
-            console.log(`✅ Posted and pinned in: ${channelName}`);
-
-            // Small delay between posts so Discord doesn't rate limit
-            await new Promise(resolve => setTimeout(resolve, 1500));
-
-        } catch (err) {
-            console.error(`Error posting in ${channelName}:`, err);
-        }
-    }
-
-    console.log('✅ All channel descriptions posted and pinned.');
 }
 
 client.login(process.env.TOKEN);
