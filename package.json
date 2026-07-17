@@ -4,6 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "start": "node index.js",
+    "build": "echo \"No build required for this plain JS bot!\"",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
