@@ -302,4 +302,5 @@ function startScheduledPosts() {
     console.log('✅ Scheduled posts running');
 }
 
+console.log("Railway Debug - Is TOKEN defined?:", !!process.env.TOKEN);
 client.login(process.env.TOKEN);
